@@ -1,7 +1,7 @@
 /* Officina 3D offline: the app shell and the 3D libraries stay in the browser cache.
    Pages: network first (updates arrive), cache when offline. Libraries and fonts: cache first.
    JARVIS's endpoints and the assistant's WebSocket are never cached. Built by crea_sito.py. */
-const V = 'officina3d-9a1427a61f';
+const V = 'officina3d-94675a2084';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icona.svg', 'icona-192.png', 'icona-512.png'];
 const CDN = ["https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js", "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js", "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TransformControls.js", "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js", "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/GLTFExporter.js", "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js"];
 self.addEventListener('install', e => {

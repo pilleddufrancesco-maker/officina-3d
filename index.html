@@ -1359,7 +1359,7 @@ function cloudErr(e){const c=e&&e.code;setCloud('error');
   if(c==='quota_exceeded')toast('Spazio cloud pieno: elimina qualche progetto o foto scansionata');
   else if(c==='invalid_argument')toast('Un oggetto è troppo grande per il cloud (di solito una foto): rifai la scansione più piccola');
   else if(c==='revoked'||c==='not_granted'){db=null;setCloud('local');renderProjects();}
-  else toast('Non riesco a salvare nel cloud: il lavoro resta in questo browser');}
+  else toast('Non riesco a salvare nel cloud: il lavoro resta in questo browser'+(sbUser&&e&&e.message?' ('+String(e.message).slice(0,90)+')':''));}
 function whenDrained(fn){if(preview&&!asking)applyPreview(true);if(db&&pid&&cloudReady)syncNow();if(writing||wq.length)afterDrain=fn;else fn();}
 function busyLocally(){return asking||preview||writing||wq.length||syncT||tmr||tc.dragging||cornerDrag;}
 function reconcile(mode){if(!db||!pid||!remote.pf||!remote.itf)return;if(mode==='remote'&&busyLocally())return;if(!remote.proj)return;
@@ -1443,9 +1443,15 @@ function sbDb(){const uid=sbUser.id,listeners=new Set(),meta={fromCache:false,ha
     const{data,error}=await q.eq('parent',l.path);if(error)throw sbErr(error);return{docs:(data||[]).map(snap),metadata:meta};}
   function run(l,now){clearTimeout(l.t);l.t=setTimeout(()=>{if(!l.on)return;fetchL(l).then(s=>{if(l.on)l.cb(s);},e=>{if(l.on&&l.err)l.err(e);});},now?0:150);}
   function listen(kind,path,cb,err){const l={kind,path,cb,err,on:true};listeners.add(l);run(l,true);return()=>{l.on=false;clearTimeout(l.t);listeners.delete(l);};}
+  /* re-read whatever shows this path: on a live update from another device, and after our own writes too,
+     so this device never depends on the live channel to see what it saved */
+  const touch=p=>listeners.forEach(l=>{if(!p||(l.kind==='doc'?l.path===p:l.path===parentOf(p)))run(l);});
+  let live=false;
   const ch=sb.channel('officina-'+uid).on('postgres_changes',{event:'*',schema:'public',table:'docs',filter:'owner=eq.'+uid},pl=>{
-      const p=(pl.new&&pl.new.path)||(pl.old&&pl.old.path);listeners.forEach(l=>{if(!p||(l.kind==='doc'?l.path===p:l.path===parentOf(p)))run(l);});})
-    .subscribe(st=>{if(st==='SUBSCRIBED')listeners.forEach(l=>run(l));});
+      touch((pl.new&&pl.new.path)||(pl.old&&pl.old.path));})
+    .subscribe((st,err)=>{live=st==='SUBSCRIBED';if(live)listeners.forEach(l=>run(l));else if(st!=='CLOSED')console.warn('Supabase tempo reale:',st,err||'');});
+  /* without the live channel (blocked network, sleeping phone) other devices' changes still arrive, every 15 s */
+  const poll=setInterval(()=>{if(!live&&!document.hidden)listeners.forEach(l=>run(l));},15000);
   /* a phone that slept missed the live updates: read everything again when the page comes back */
   const wake=()=>{if(!document.hidden)listeners.forEach(l=>run(l));};document.addEventListener('visibilitychange',wake);
   const promote={/* first sign-in: what was only in this browser goes to the cloud */
@@ -1454,11 +1460,12 @@ function sbDb(){const uid=sbUser.id,listeners=new Set(),meta={fromCache:false,ha
       if(x.kind==='modello'&&x.local){try{const t=await IDB.get(x.local);if(!t)continue;Object.assign(x,await storeModelText(t));delete x.local;}catch(err){continue;}}
       try{await api.doc('library/'+x.id).set(x);}catch(err){console.warn(err);}}}};
   const api={doc:path=>({
-      set:async data=>{const{error,status}=await sb.from('docs').upsert({owner:uid,path,parent:parentOf(path),data,updated_at:new Date().toISOString()},{onConflict:'owner,path'});if(error)throw sbErr(error,status);},
-      delete:async()=>{const{error,status}=await sb.from('docs').delete().eq('owner',uid).eq('path',path);if(error)throw sbErr(error,status);},
+      set:async data=>{const{error,status}=await sb.from('docs').upsert({owner:uid,path,parent:parentOf(path),data,updated_at:new Date().toISOString()},{onConflict:'owner,path'});
+        if(error){console.warn('Supabase salvataggio',path,status,error);throw sbErr(error,status);}touch(path);},
+      delete:async()=>{const{error,status}=await sb.from('docs').delete().eq('owner',uid).eq('path',path);if(error){console.warn('Supabase cancellazione',path,status,error);throw sbErr(error,status);}touch(path);},
       onSnapshot:(cb,err)=>listen('doc',path,cb,err)}),
     collection:path=>({onSnapshot:(cb,err)=>listen('col',path,cb,err)}),
-    promote,close(){listeners.forEach(l=>{l.on=false;clearTimeout(l.t);});listeners.clear();document.removeEventListener('visibilitychange',wake);sb.removeChannel(ch);}};
+    promote,close(){clearInterval(poll);listeners.forEach(l=>{l.on=false;clearTimeout(l.t);});listeners.clear();document.removeEventListener('visibilitychange',wake);sb.removeChannel(ch);}};
   return api;}
 function syncUI(step){const box=$('#syncBox');if(!SBCFG){box.hidden=true;return;}box.hidden=false;
   $('#syncLogin').hidden=!!sbUser||step==='code';$('#syncCode').hidden=!!sbUser||step!=='code';$('#syncOut').hidden=!sbUser;
