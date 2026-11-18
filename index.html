@@ -14,6 +14,7 @@
 <style>*{margin:0}body{background:#eceee9}@media (prefers-color-scheme:dark){body{background:#141816}}</style>
 </head>
 <body>
+<script>window.OFFICINA_SB={"url": "https://wtliixvbezdnjlbmdmlv.supabase.co", "key": "sb_publishable_Rb3dW3ecKd4XWUA8NoombA_k3VZuv2y"}</script>
 <title>Officina 3D</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
@@ -426,6 +427,12 @@ input[type=range]{width:100%;accent-color:var(--accent)}
           <div class="sep"></div>
           <div>
             <h3>Progetti</h3>
+            <div id="syncBox" class="pane" style="gap:8px;margin-bottom:12px" hidden>
+              <p class="note" id="syncNote">Accedi con la tua email per ritrovare progetti, libreria e modelli su tutti i tuoi dispositivi.</p>
+              <form class="row2" id="syncLogin"><label class="f">Email <input type="email" id="sbEmail" autocomplete="email" required></label><div style="align-self:end"><button class="btn primary" id="sbSend" type="submit">Mandami il codice</button></div></form>
+              <form class="row2" id="syncCode" hidden><label class="f">Codice (se c'è) <input id="sbCode" inputmode="numeric" autocomplete="one-time-code" maxlength="10" required></label><div style="align-self:end"><button class="btn primary" id="sbVerify" type="submit">Entra</button></div></form>
+              <div class="actions" id="syncOut" hidden><button class="btn" id="sbLogout" type="button">Esci</button></div>
+            </div>
             <p class="note" id="cloudNote" style="margin-bottom:8px">Il progetto si salva da solo in questo browser. Per spostarlo su un altro dispositivo copia il codice e incollalo là.</p>
             <div class="list" id="projList" hidden style="margin-bottom:8px"></div>
             <div class="actions" style="margin-bottom:8px">
@@ -757,8 +764,9 @@ function prepModel(root){root.updateMatrixWorld(true);const b=new THREE.Box3().s
     tris+=(m.geometry.index?m.geometry.index.count:m.geometry.attributes.position.count)/3;});
   return{tpl:wrap,size:[Math.max(s.x,.001),Math.max(s.y,.001),Math.max(s.z,.001)],tris:Math.round(tris)};}
 const modelCache=new Map();
-const modelKey=p=>p.asset?'a:'+p.asset:'l:'+(p.local||'');
+const modelKey=p=>p.asset?'a:'+p.asset:p.sbfile?'s:'+p.sbfile:'l:'+(p.local||'');
 async function modelText(p){if(p.asset){const r=await fetch('/_blob/'+p.asset);if(!r.ok)throw new Error('missing');return r.text();}
+  if(p.sbfile){await sbReady;if(!sb||!sbUser)throw new Error('missing');const{data,error}=await sb.storage.from('modelli').download(p.sbfile);if(error)throw new Error('missing');return data.text();}
   if(p.local){const t=await IDB.get(p.local);if(t)return t;}throw new Error('missing');}
 function loadModel(p){const k=modelKey(p);if(!modelCache.has(k))modelCache.set(k,modelText(p).then(parseGltf).then(prepModel));return modelCache.get(k);}
 function buildModel(g,p,ver){const ph=new THREE.Mesh(new THREE.BoxGeometry(Math.max(p.w,.001),Math.max(p.h,.001),Math.max(p.d,.001)),new THREE.MeshBasicMaterial({color:0x9aa4b0,wireframe:true}));
@@ -769,11 +777,14 @@ function buildModel(g,p,ver){const ph=new THREE.Mesh(new THREE.BoxGeometry(Math.
   e=>{console.warn('modello',e);if(g.userData.ver!==ver)return;ph.userData.missing=true;if(!ph.material.userData.shared)ph.material.color.set(0xb3261e);});}
 function placeModel(e){const c=roomCenter(),p={id:nid(),ord:nextOrd(),type:'modello',name:e.name||'Modello',color:'#ffffff',finish:'opaco',mat:'liscio',hole:false,mir:1,
     w:e.bw,h:e.bh,d:e.bd,bw:e.bw,bh:e.bh,bd:e.bd,scaleOk:false,pos:[+c[0].toFixed(2),0,+c[1].toFixed(2)],rot:[0,0,0]};
-  if(e.asset)p.asset=e.asset;else p.local=e.local;addRaw(p);select([p.id]);commit();toast(`${p.name} aggiunto: controlla le misure`);return p;}
+  if(e.asset)p.asset=e.asset;else if(e.sbfile)p.sbfile=e.sbfile;else p.local=e.local;addRaw(p);select([p.id]);commit();toast(`${p.name} aggiunto: controlla le misure`);return p;}
 const modelErr=e=>{const c=e&&e.code;return{too_large:'Il modello supera i 20 MB anche dopo la conversione: riducilo prima di importarlo',quota_or_state:'Spazio per i file pieno: togli qualche modello che non usi',rate_limited:'Troppi caricamenti di fila: riprova tra poco',unsupported_type:'Questo tipo di file non si può salvare',upstream_auth:'Accedi di nuovo a claude.ai e riprova'}[c]||(e&&e.message&&!c?e.message:'Non riesco a salvare il modello: riprova');};
 async function storeModelText(text){const as=await getAssets();
   if(as){let r;try{r=await as.upload(new Blob([text],{type:'application/json'}),{type:'application/json'});}catch(e){if(e&&e.code==='store_unavailable'){await new Promise(r=>setTimeout(r,800));r=await as.upload(new Blob([text],{type:'application/json'}),{type:'application/json'});}else throw e;}return{asset:r.id};}
-  const k='m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);try{await IDB.put(k,text);}catch(e){throw new Error('Questo browser non mi lascia salvare il modello');}return{local:k};}
+  const k='m'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  if(sb&&sbUser){const path=sbUser.id+'/'+k+'.gltf',{error}=await sb.storage.from('modelli').upload(path,new Blob([text],{type:'application/json'}),{contentType:'application/json',upsert:false});
+    if(error)throw Object.assign(new Error(/size|large|exceed/i.test(error.message)?'Il modello è troppo grande per il cloud (massimo 20 MB)':'Non riesco a caricare il modello nel cloud: riprova'),{});return{sbfile:path};}
+  try{await IDB.put(k,text);}catch(e){throw new Error('Questo browser non mi lascia salvare il modello');}return{local:k};}
 async function importModelFile(f){const info=$('#glbInfo');info.hidden=false;
   if(f.size>12*1024*1024){info.textContent='File troppo grande: il massimo è 12 MB. Riducilo (meno poligoni, texture più piccole) e riprova.';return;}
   info.textContent='Apro il modello…';
@@ -1374,8 +1385,8 @@ function createProject(s){unsubs.forEach(u=>u());unsubs=[];const id='p'+Date.now
   try{localStorage.setItem(PIDKEY,id);}catch(e){}syncNow();afterDrain=()=>openProject(id);if(!writing&&!wq.length){const f=afterDrain;afterDrain=null;f();}}
 function switchProject(id){if(id===pid)return;whenDrained(()=>openProject(id));}
 function renderProjects(){const L=$('#projList'),note=$('#cloudNote');
-  if(!db){L.hidden=true;$('#pDel').hidden=true;note.textContent='Il progetto si salva solo in questo browser. Per spostarlo su un altro dispositivo copia il codice e incollalo là.';return;}
-  note.textContent='I progetti si salvano nel cloud: li ritrovi uguali su computer e telefono, e Claude può aggiungerci oggetti.';
+  if(!db){L.hidden=true;$('#pDel').hidden=true;note.textContent=SBCFG&&!window.claude?'Per ora il progetto si salva solo in questo browser. Accedi qui sopra per sincronizzarlo, oppure usa Scarica progetto.':'Il progetto si salva solo in questo browser. Per spostarlo su un altro dispositivo usa Scarica progetto (.zip) e aprilo là.';return;}
+  note.textContent=sbUser?'I progetti si sincronizzano: li ritrovi uguali su computer e telefono.':'I progetti si salvano nel cloud: li ritrovi uguali su computer e telefono, e Claude può aggiungerci oggetti.';
   L.hidden=false;$('#pDel').hidden=!pid;L.innerHTML='';const list=projList.slice().sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   if(!list.length){L.innerHTML='<div class="empty" style="border:0">Sto creando il primo progetto…</div>';return;}
   list.forEach(p=>{const b=document.createElement('button');if(p.id===pid)b.className='on';const d=p.updatedAt?new Date(p.updatedAt):null;
@@ -1390,13 +1401,88 @@ $('#pDel').onclick=e=>{const b=e.currentTarget;if(!db||!pid)return;
   ids.forEach(k=>wq.push({k:null,fn:()=>db.doc(base+'/items/'+k).delete()}));wq.push({k:null,fn:()=>db.doc(base).delete()});
   projList=projList.filter(p=>p.id!==old);afterDrain=()=>{const other=projList[0];if(other)openProject(other.id);else createProject(sample());toast('Progetto eliminato');};setCloud('saving');pump();};
 async function initCloud(){let d=null;try{if(window.claude&&typeof window.claude.use==='function')d=await window.claude.use('db');}catch(e){d=null;}
-  if(!d){setCloud('local');renderProjects();return;}db=d;setCloud('loading');renderProjects();let first=true;
-  db.collection('library').onSnapshot(s=>{lib=s.docs.filter(x=>x.exists).map(x=>x.data()).sort((a,b)=>(b.at||0)-(a.at||0));renderLibList();},e=>console.warn('libreria',e));const to=setTimeout(()=>{if(first)setCloud('slow');},10000);
-  db.collection('projects').onSnapshot(s=>{projList=s.docs.filter(x=>x.exists).map(x=>Object.assign({id:x.id},x.data()));renderProjects();
+  if(!d){if(!sbUser){setCloud('local');renderProjects();}return;}startCloud(d);}
+/* d: the artifact's db, or sbDb() (Supabase) on the website: both offer doc().set/delete/onSnapshot and collection().onSnapshot */
+let cloudUnsubs=[];
+function startCloud(d){db=d;setCloud('loading');renderProjects();let first=true,libFirst=true;const to=setTimeout(()=>{if(first)setCloud('slow');},10000);
+  cloudUnsubs.push(db.collection('library').onSnapshot(s=>{const list=s.docs.filter(x=>x.exists).map(x=>x.data()).sort((a,b)=>(b.at||0)-(a.at||0));
+    if(libFirst){libFirst=false;if(!list.length&&lib.length&&db.promote)db.promote.lib(lib.slice());}lib=list;renderLibList();},e=>console.warn('libreria',e)));
+  cloudUnsubs.push(db.collection('projects').onSnapshot(s=>{projList=s.docs.filter(x=>x.exists).map(x=>Object.assign({id:x.id},x.data()));renderProjects();
     if(first&&!s.metadata.fromCache){first=false;clearTimeout(to);let want=null;try{want=localStorage.getItem(PIDKEY);}catch(e){}
       if(want&&projList.some(p=>p.id===want))openProject(want);
+      else if(projList.length&&db.promote&&!want&&!untouchedSample(state)){
+        /* first sign-in on a device that already has its own work: it becomes one more project, nothing is lost */
+        const copy=JSON.parse(JSON.stringify(state));copy.name=(copy.name||'Progetto')+' (da questo dispositivo)';
+        db.promote.state(copy).then(()=>{createProject(copy);toast('Il lavoro di questo dispositivo è ora un progetto in più');});}
       else if(projList.length){projList.sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));openProject(projList[0].id);}
-      else createProject(state);}},e=>{clearTimeout(to);cloudErr(e);});}
+      else if(db.promote)db.promote.state(state).then(()=>createProject(state));
+      else createProject(state);}},e=>{clearTimeout(to);cloudErr(e);}));}
+function untouchedSample(s){const strip=x=>JSON.stringify(x.items.map(i=>[i.type,i.w,i.d,i.h,i.pos,i.rot,i.color]))+JSON.stringify(x.room)+x.name;
+  try{return strip(s)===strip(sample());}catch(e){return false;}}
+/* back to this browser only (signed out): the open project stays on screen and is kept locally */
+function stopCloud(){unsubs.forEach(u=>u());unsubs=[];cloudUnsubs.forEach(u=>u());cloudUnsubs=[];if(db&&db.close)db.close();
+  db=null;pid=null;cloudReady=false;wq.length=0;clearTimeout(syncT);syncT=null;lastSynced=new Map();projList=[];
+  try{lib=JSON.parse(localStorage.getItem(LIBKEY))||[];}catch(e){lib=[];}renderLibList();setCloud('local');renderProjects();}
+
+/* =================== Supabase sync (website only) ===================
+   window.OFFICINA_SB = {url, key} is written into the website by crea_sito.py (public key: the data is protected by
+   row level security, see supabase/officina.sql). One table `docs` (owner, path, parent, data) holds the same
+   documents as the artifact's db, so the sync above works unchanged; models go to the private bucket "modelli". */
+const SBCFG=(!window.claude&&window.OFFICINA_SB&&window.OFFICINA_SB.url&&window.OFFICINA_SB.key)?window.OFFICINA_SB:null;
+const SB_JS='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.0/dist/umd/supabase.js';
+let sb=null,sbUser=null,sbReadyRes;const sbReady=new Promise(r=>{sbReadyRes=r;});if(!SBCFG)sbReadyRes(null);
+const parentOf=p=>p.split('/').slice(0,-1).join('/');
+function sbErr(e,status){const m=String((e&&(e.message||e.error_description||e.msg))||'errore');
+  const code=(!navigator.onLine||/fetch|network|timed? ?out/i.test(m))?'unavailable':/too large|payload|exceed/i.test(m)?'invalid_argument':/quota|limit/i.test(m)?'quota_exceeded':'sb_error';
+  return Object.assign(new Error(m),{code,status});}
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement('script');s.src=src;s.onload=res;s.onerror=()=>rej(new Error('script'));document.head.appendChild(s);});}
+function sbDb(){const uid=sbUser.id,listeners=new Set(),meta={fromCache:false,hasPendingWrites:false};
+  const snap=row=>({id:row?row.path.split('/').pop():null,exists:!!row,data:()=>row?JSON.parse(JSON.stringify(row.data)):undefined});
+  async function fetchL(l){const q=sb.from('docs').select('path,data').eq('owner',uid);
+    if(l.kind==='doc'){const{data,error}=await q.eq('path',l.path).maybeSingle();if(error)throw sbErr(error);return Object.assign(snap(data),{metadata:meta});}
+    const{data,error}=await q.eq('parent',l.path);if(error)throw sbErr(error);return{docs:(data||[]).map(snap),metadata:meta};}
+  function run(l,now){clearTimeout(l.t);l.t=setTimeout(()=>{if(!l.on)return;fetchL(l).then(s=>{if(l.on)l.cb(s);},e=>{if(l.on&&l.err)l.err(e);});},now?0:150);}
+  function listen(kind,path,cb,err){const l={kind,path,cb,err,on:true};listeners.add(l);run(l,true);return()=>{l.on=false;clearTimeout(l.t);listeners.delete(l);};}
+  const ch=sb.channel('officina-'+uid).on('postgres_changes',{event:'*',schema:'public',table:'docs',filter:'owner=eq.'+uid},pl=>{
+      const p=(pl.new&&pl.new.path)||(pl.old&&pl.old.path);listeners.forEach(l=>{if(!p||(l.kind==='doc'?l.path===p:l.path===parentOf(p)))run(l);});})
+    .subscribe(st=>{if(st==='SUBSCRIBED')listeners.forEach(l=>run(l));});
+  /* a phone that slept missed the live updates: read everything again when the page comes back */
+  const wake=()=>{if(!document.hidden)listeners.forEach(l=>run(l));};document.addEventListener('visibilitychange',wake);
+  const promote={/* first sign-in: what was only in this browser goes to the cloud */
+    async state(s){for(const p of s.items)if(p.type==='modello'&&p.local&&!p.sbfile){try{const t=await IDB.get(p.local);if(t){const w=await storeModelText(t);delete p.local;Object.assign(p,w);}}catch(e){console.warn(e);}}},
+    async lib(list){for(const e of list.slice().reverse()){const x=JSON.parse(JSON.stringify(e));
+      if(x.kind==='modello'&&x.local){try{const t=await IDB.get(x.local);if(!t)continue;Object.assign(x,await storeModelText(t));delete x.local;}catch(err){continue;}}
+      try{await api.doc('library/'+x.id).set(x);}catch(err){console.warn(err);}}}};
+  const api={doc:path=>({
+      set:async data=>{const{error,status}=await sb.from('docs').upsert({owner:uid,path,parent:parentOf(path),data,updated_at:new Date().toISOString()},{onConflict:'owner,path'});if(error)throw sbErr(error,status);},
+      delete:async()=>{const{error,status}=await sb.from('docs').delete().eq('owner',uid).eq('path',path);if(error)throw sbErr(error,status);},
+      onSnapshot:(cb,err)=>listen('doc',path,cb,err)}),
+    collection:path=>({onSnapshot:(cb,err)=>listen('col',path,cb,err)}),
+    promote,close(){listeners.forEach(l=>{l.on=false;clearTimeout(l.t);});listeners.clear();document.removeEventListener('visibilitychange',wake);sb.removeChannel(ch);}};
+  return api;}
+function syncUI(step){const box=$('#syncBox');if(!SBCFG){box.hidden=true;return;}box.hidden=false;
+  $('#syncLogin').hidden=!!sbUser||step==='code';$('#syncCode').hidden=!!sbUser||step!=='code';$('#syncOut').hidden=!sbUser;
+  $('#syncNote').textContent=sbUser?`Sincronizzato come ${sbUser.email||'utente'}: progetti, libreria e modelli sono uguali su tutti i tuoi dispositivi.`:
+    step==='code'?`Ti ho mandato un'email a ${$('#sbEmail').value.trim()}: apri il link che contiene su questo dispositivo, nello stesso browser. Se l'email ha anche un codice, puoi scriverlo qui sotto.`:
+    'Accedi con la tua email per ritrovare progetti, libreria e modelli su tutti i tuoi dispositivi.';}
+function onSession(session){const u=session&&session.user;
+  if(u&&(!sbUser||sbUser.id!==u.id)){if(sbUser)stopCloud();sbUser=u;syncUI();if(asking){toast('Sincronizzo appena l\'assistente ha finito');const w=setInterval(()=>{if(!asking){clearInterval(w);startCloud(sbDb());}},500);}else whenDrained(()=>startCloud(sbDb()));}
+  else if(!u&&sbUser){sbUser=null;stopCloud();syncUI();}}
+async function initSync(){if(!SBCFG)return;syncUI();
+  try{if(!window.supabase)await loadScript(SB_JS);
+    sb=window.supabase.createClient(SBCFG.url,SBCFG.key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true,storageKey:'officina3d-sb'}});}
+  catch(e){$('#syncNote').textContent='Sincronizzazione non raggiungibile (sei offline?): il progetto resta in questo browser.';sbReadyRes(null);return;}
+  /* supabase-js: never await its own calls inside this callback (it can lock), hence the setTimeout */
+  sb.auth.onAuthStateChange((ev,session)=>{setTimeout(()=>onSession(session),0);});
+  const{data}=await sb.auth.getSession();sbReadyRes(sb);onSession(data&&data.session);}
+$('#syncLogin').addEventListener('submit',async e=>{e.preventDefault();if(!sb)return;const email=$('#sbEmail').value.trim();if(!email)return;const b=$('#sbSend');b.disabled=true;
+  const{error}=await sb.auth.signInWithOtp({email,options:{emailRedirectTo:location.origin+location.pathname}});b.disabled=false;
+  if(error){toast(/rate|seconds|limit/i.test(error.message)?'Troppe email di fila: aspetta un minuto e riprova':'Non riesco a mandare l\'email: controlla l\'indirizzo');return;}
+  syncUI('code');$('#sbCode').focus();});
+$('#syncCode').addEventListener('submit',async e=>{e.preventDefault();if(!sb)return;const b=$('#sbVerify');b.disabled=true;
+  const{error}=await sb.auth.verifyOtp({email:$('#sbEmail').value.trim(),token:$('#sbCode').value.trim(),type:'email'});b.disabled=false;
+  if(error){toast('Codice sbagliato o scaduto: controlla l\'ultima email o chiedine un altro');return;}$('#sbCode').value='';toast('Accesso fatto: sincronizzo…');});
+$('#sbLogout').onclick=async()=>{if(!sb)return;if(preview&&!asking)applyPreview(true);whenDrained(async()=>{await sb.auth.signOut({scope:'local'});toast('Uscito: il progetto aperto resta in questo browser');});};
 
 /* =================== export for 3D printing (zip with .stl + .obj) =================== */
 function encodeScan(cv){let c=cv;for(let k=0;k<7;k++){let u=c.toDataURL('image/webp',.9);if(!u.startsWith('data:image/webp'))u=c.toDataURL('image/png');if(u.length<170000)return u;
@@ -1484,8 +1570,9 @@ async function exportPrint(which){const ids=which==='sel'?sel.slice():state.item
 $('#expSel').onclick=()=>exportPrint('sel');$('#expAll').onclick=()=>exportPrint('all');
 
 /* =================== project package (.zip): progetto.json + modelli/<key>.gltf =================== */
+const packKey=p=>String(p.asset||p.sbfile||p.local||'').replace(/[^\w.-]+/g,'_');
 async function exportProject(){const s=JSON.parse(JSON.stringify(state)),enc=new TextEncoder(),files=[],seen=new Set();let miss=0;toast('Preparo il pacchetto…');
-  for(const p of s.items){if(p.type!=='modello')continue;const key=p.asset||p.local;if(!key||seen.has(key))continue;seen.add(key);
+  for(const p of s.items){if(p.type!=='modello')continue;const key=packKey(p);if(!key||seen.has(key))continue;seen.add(key);
     try{files.push({name:'modelli/'+key+'.gltf',data:enc.encode(await modelText(p))});}catch(e){miss++;}}
   const pack={formato:'officina3d-progetto',versione:1,salvato:new Date().toISOString(),progetto:s};
   const readme=`Officina 3D - pacchetto del progetto\n\nProgetto: ${s.name||'Senza nome'}\nOggetti: ${s.items.length}\nModelli importati inclusi: ${seen.size-miss}\n\nprogetto.json -> stanza e oggetti (misure in metri)\nmodelli/ -> i modelli 3D importati, in formato .gltf\n\nPer riaprirlo: Officina 3D > Stanza > Apri progetto (.zip).\n`;
@@ -1503,12 +1590,13 @@ async function importProject(f){if(asking){toast('Aspetta che l\'assistente fini
     let pack;try{pack=JSON.parse(new TextDecoder().decode(pj));}catch(e){throw new Error('Il progetto nello .zip è danneggiato');}
     const s=migrate(pack&&pack.progetto);if(!s)throw new Error('Il progetto nello .zip non è leggibile');toast('Apro il progetto…');
     const remap=new Map();let miss=0;
-    for(const p of s.items){if(p.type!=='modello')continue;const key=p.asset||p.local;
+    for(const p of s.items){if(p.type!=='modello')continue;const key=packKey(p);
       if(!remap.has(key)){let where=null;const file=z['modelli/'+key+'.gltf'];
-        if(p.asset&&await fetch('/_blob/'+p.asset,{method:'HEAD'}).then(r=>r.ok,()=>false))where={asset:p.asset};
+        if(p.asset&&window.claude&&await fetch('/_blob/'+p.asset,{method:'HEAD'}).then(r=>r.ok,()=>false))where={asset:p.asset};
+        else if(p.sbfile&&sbUser&&p.sbfile.startsWith(sbUser.id+'/'))where={sbfile:p.sbfile};
         else if(file){try{where=await storeModelText(new TextDecoder().decode(file));}catch(e){console.warn(e);}}
         remap.set(key,where);}
-      const where=remap.get(key);delete p.asset;delete p.local;if(where)Object.assign(p,where);else{p.local='mancante';miss++;}}
+      const where=remap.get(key);delete p.asset;delete p.local;delete p.sbfile;if(where)Object.assign(p,where);else{p.local='mancante';miss++;}}
     const done=()=>toast(miss?`Progetto aperto, ma ${miss} modell${miss>1?'i':'o'} non trovat${miss>1?'i':'o'}`:'Progetto aperto');
     if(db){whenDrained(()=>{createProject(s);setView('3d');done();});}
     else{state=s;sel=[];rebuildAll();commit();setView('3d');done();}}
@@ -1538,7 +1626,7 @@ function loop(now){requestAnimationFrame(loop);const dt=Math.min(.05,(now-last)/
   else{if(anim){const k=Math.min(1,(now-anim.s)/650),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;camera.position.lerpVectors(anim.p0,anim.p1,e);orbit.target.lerpVectors(anim.t0,anim.t1,e);if(k>=1)anim=null;}orbit.update();}
   updateWalls();if(tc.dragging)helperRoot.children.forEach(h=>h.update());drawOverlay();renderer.render(scene,camera);}
 const R0=state.room,B0=polyBox(roomPoly());camera.position.set(B0.cx+B0.w*.85,R0.h*1.55+1,B0.cz+B0.d*1.25+.6);orbit.target.set(B0.cx,.7,B0.cz);
-rebuildAll();commit();resize();requestAnimationFrame(loop);initCloud();detectJarvis().then(initAssistant).then(initJarvis);
+rebuildAll();commit();resize();requestAnimationFrame(loop);initCloud();initSync();detectJarvis().then(initAssistant).then(initJarvis);
 })();
 </script>
 
